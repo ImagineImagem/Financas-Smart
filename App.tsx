@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Expense, PaymentType, PersonName, SummaryData } from './types';
 import { PEOPLE, MONTHS } from './constants';
 import SummaryCards from './components/SummaryCards';
@@ -10,6 +10,7 @@ const App: React.FC = () => {
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [expenses, setExpenses] = useState<Expense[]>(() => {
     try {
@@ -112,6 +113,40 @@ const App: React.FC = () => {
     }
   };
 
+  const downloadBackup = () => {
+    const dataStr = JSON.stringify(expenses, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    const exportFileDefaultName = `backup_financas_${new Date().toISOString().split('T')[0]}.json`;
+    
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fileReader = new FileReader();
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    fileReader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        const decoded = JSON.parse(content);
+        if (Array.isArray(decoded)) {
+          if (confirm(`Restaurar ${decoded.length} despesas do arquivo? Isso substituirá seus dados atuais.`)) {
+            setExpenses(decoded);
+            setShowSync(false);
+            alert('Dados restaurados com sucesso!');
+          }
+        }
+      } catch (err) {
+        alert('Erro ao ler arquivo de backup.');
+      }
+    };
+    fileReader.readAsText(files[0]);
+  };
+
   const importData = () => {
     if (!syncCode) return;
     try {
@@ -203,14 +238,14 @@ const App: React.FC = () => {
             onClick={() => { setShowSync(true); setGeneratedCode(''); setSyncCode(''); }}
             className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-[#1ed760] active:scale-90 transition-transform"
           >
-            <i className="fas fa-sync-alt text-sm"></i>
+            <i className="fas fa-cloud-upload-alt text-sm"></i>
           </button>
           <div>
             <h1 className="text-2xl font-black text-white uppercase tracking-tight leading-none">
-              {activeView === 'dashboard' ? 'Dashboard' : 'Despesas'}
+              {activeView === 'dashboard' ? 'Início' : 'Faturas'}
             </h1>
             <p className="text-[#1ed760] text-[10px] font-bold uppercase tracking-widest mt-1">
-              {now.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
+              Smart Finance v5.1
             </p>
           </div>
         </div>
@@ -254,19 +289,19 @@ const App: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
               <div>
-                <div className="text-white/30 text-[10px] uppercase font-bold tracking-wider">Gasto Mensal</div>
+                <div className="text-white/30 text-[10px] uppercase font-bold tracking-wider">Total do Mês</div>
                 <div className="text-white font-bold">R$ {(summaryData.totalPending + summaryData.totalPaid).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
               </div>
               <div className="text-right">
-                <div className="text-white/30 text-[10px] uppercase font-bold tracking-wider">Previsão Próx. Mês</div>
+                <div className="text-white/30 text-[10px] uppercase font-bold tracking-wider">Lançado Próx. Mês</div>
                 <div className="text-[#1ed760] font-bold">R$ {nextMonthDebt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
               </div>
             </div>
 
             <div className="mt-6 space-y-2">
               <div className="flex justify-between items-center text-[10px] font-bold">
-                <span className="text-white/30 uppercase">Uso do orçamento</span>
-                <span className="text-white/60">Controle Ativo</span>
+                <span className="text-white/30 uppercase">Status de Pagamentos</span>
+                <span className="text-[#1ed760]">{Math.round((summaryData.totalPaid / ((summaryData.totalPending + summaryData.totalPaid) || 1)) * 100)}% Pago</span>
               </div>
               <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
                 <div 
@@ -279,12 +314,12 @@ const App: React.FC = () => {
 
           <section>
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-white font-bold text-lg">Resumo por tipo</h3>
-              <button onClick={() => setActiveView('expenses')} className="text-[#1ed760] text-sm font-medium">Ver todos</button>
+              <h3 className="text-white font-bold text-lg">Resumo por Carteira</h3>
+              <button onClick={() => setActiveView('expenses')} className="text-[#1ed760] text-sm font-medium">Ver Faturas</button>
             </div>
             <div className="grid grid-cols-2 gap-4">
               {[PaymentType.NUBANK, PaymentType.INTER, PaymentType.BOLETO, PaymentType.PIX].map(type => (
-                <div key={type} className="bg-[#1a241f] p-5 rounded-3xl border border-white/5 transition-transform active:scale-95">
+                <div key={type} className="bg-[#1a241f] p-5 rounded-3xl border border-white/5 transition-transform active:scale-95 shadow-lg">
                   <div className="flex justify-between items-start mb-4">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                       type === PaymentType.NUBANK ? 'bg-purple-500/10 text-purple-500' :
@@ -298,7 +333,7 @@ const App: React.FC = () => {
                       }`}></i>
                     </div>
                   </div>
-                  <div className="text-white/30 text-xs mb-1">{type}</div>
+                  <div className="text-white/30 text-[10px] font-bold uppercase mb-1">{type}</div>
                   <div className="text-white font-black text-lg">
                     R$ {(summaryData.byPaymentType[type] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </div>
@@ -318,7 +353,7 @@ const App: React.FC = () => {
               <button 
                 onClick={() => setFilterPerson('Todos')}
                 className={`px-6 py-3 rounded-2xl text-sm font-bold transition-all whitespace-nowrap ${
-                  filterPerson === 'Todos' ? 'bg-[#1ed760] text-black shadow-lg shadow-[#1ed760]/20' : 'bg-[#1a241f] text-white/40'
+                  filterPerson === 'Todos' ? 'bg-[#1ed760] text-black shadow-lg shadow-[#1ed760]/20' : 'bg-[#1a241f] text-white/40 border border-white/5'
                 }`}
               >
                 Todos
@@ -328,7 +363,7 @@ const App: React.FC = () => {
                   key={person}
                   onClick={() => setFilterPerson(person)}
                   className={`px-6 py-3 rounded-2xl text-sm font-bold transition-all whitespace-nowrap ${
-                    filterPerson === person ? 'bg-[#1ed760] text-black shadow-lg shadow-[#1ed760]/20' : 'bg-[#1a241f] text-white/40'
+                    filterPerson === person ? 'bg-[#1ed760] text-black shadow-lg shadow-[#1ed760]/20' : 'bg-[#1a241f] text-white/40 border border-white/5'
                   }`}
                 >
                   {person}
@@ -340,7 +375,7 @@ const App: React.FC = () => {
           <section className="px-6 pb-24">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-white font-black text-xl">
-                {filterPerson === 'Todos' ? `Em ${MONTHS[filterMonth]}` : `Gastos de ${filterPerson}`}
+                {filterPerson === 'Todos' ? `Lançamentos` : `Parte de ${filterPerson}`}
               </h3>
               <span className="bg-[#1a241f] text-white/20 text-[10px] font-bold px-3 py-1 rounded-lg uppercase tracking-wider">
                 {filteredExpenses.length} itens
@@ -351,7 +386,7 @@ const App: React.FC = () => {
               {filteredExpenses.length === 0 ? (
                 <div className="py-20 flex flex-col items-center justify-center opacity-10">
                   <i className="fas fa-receipt text-6xl mb-4"></i>
-                  <p className="font-bold">Sem registros em {MONTHS[filterMonth]}</p>
+                  <p className="font-bold">Nada para exibir</p>
                 </div>
               ) : (
                 filteredExpenses.map(exp => (
@@ -369,7 +404,7 @@ const App: React.FC = () => {
         </main>
       )}
 
-      {/* Sync Modal */}
+      {/* Sync & Backup Modal */}
       {showSync && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[200] flex flex-col p-6 overflow-y-auto">
            <div className="flex justify-end mb-4">
@@ -377,48 +412,104 @@ const App: React.FC = () => {
                <i className="fas fa-times text-xl"></i>
              </button>
            </div>
-           <div className="flex flex-col items-center text-center mb-8">
-             <div className="w-16 h-16 rounded-2xl bg-[#1ed760]/10 flex items-center justify-center mb-4">
-               <i className="fas fa-sync text-[#1ed760] text-2xl"></i>
+           
+           <div className="flex flex-col items-center text-center mb-10">
+             <div className="w-16 h-16 rounded-3xl bg-[#1ed760]/10 flex items-center justify-center mb-4">
+               <i className="fas fa-shield-alt text-[#1ed760] text-3xl"></i>
              </div>
-             <h2 className="text-white text-xl font-black">Sincronizar</h2>
+             <h2 className="text-white text-2xl font-black">Segurança e Sincronização</h2>
+             <p className="text-white/40 text-xs mt-2 max-w-[250px]">Os dados são salvos localmente. Use as opções abaixo para criar cópias de segurança.</p>
            </div>
+
            <div className="space-y-6">
-             <div className="bg-[#1a241f] p-5 rounded-[1.5rem] border border-white/5">
-                <button onClick={exportData} className="w-full bg-[#1ed760] text-black font-black py-4 rounded-xl flex items-center justify-center gap-2">
-                  <i className="fas fa-file-export"></i> Gerar Backup
-                </button>
-                {generatedCode && (
-                  <div className="mt-4">
-                    <textarea readOnly value={generatedCode} className="w-full bg-black/40 border border-[#1ed760]/30 rounded-lg p-3 text-white text-[10px] font-mono h-20 outline-none" />
+             {/* Opção 1: Backup em Arquivo (Recomendado) */}
+             <div className="bg-[#1a241f] p-6 rounded-[2rem] border border-white/5 shadow-xl">
+                <div className="flex items-center gap-3 mb-4">
+                  <i className="fas fa-file-download text-[#1ed760]"></i>
+                  <h3 className="text-white font-bold">Backup por Arquivo</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={downloadBackup} 
+                    className="bg-white/5 hover:bg-white/10 text-white font-bold py-4 rounded-2xl flex flex-col items-center justify-center gap-2 border border-white/5 transition-all"
+                  >
+                    <i className="fas fa-download text-lg"></i>
+                    <span className="text-[10px] uppercase">Baixar .JSON</span>
+                  </button>
+                  <button 
+                    onClick={() => fileInputRef.current?.click()} 
+                    className="bg-white/5 hover:bg-white/10 text-white font-bold py-4 rounded-2xl flex flex-col items-center justify-center gap-2 border border-white/5 transition-all"
+                  >
+                    <i className="fas fa-upload text-lg"></i>
+                    <span className="text-[10px] uppercase">Abrir Arquivo</span>
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleFileUpload} 
+                    accept=".json" 
+                    className="hidden" 
+                  />
+                </div>
+             </div>
+
+             {/* Opção 2: Código de Sincronização */}
+             <div className="bg-[#1a241f] p-6 rounded-[2rem] border border-white/5 shadow-xl">
+                <div className="flex items-center gap-3 mb-4">
+                  <i className="fas fa-code text-[#1ed760]"></i>
+                  <h3 className="text-white font-bold">Código de Transferência</h3>
+                </div>
+                
+                <div className="space-y-4">
+                  <button onClick={exportData} className="w-full bg-[#1ed760] text-black font-black py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all">
+                    <i className="fas fa-copy"></i> {copySuccess ? 'Copiado!' : 'Gerar e Copiar Código'}
+                  </button>
+
+                  <div className="relative">
+                    <textarea 
+                      value={syncCode} 
+                      onChange={(e) => setSyncCode(e.target.value)} 
+                      className="w-full bg-black/40 border border-white/5 rounded-2xl p-4 text-white text-[10px] font-mono h-24 outline-none focus:border-[#1ed760]/50 transition-all" 
+                      placeholder="Cole o código recebido aqui para restaurar..." 
+                    />
+                    <button 
+                      onClick={importData} 
+                      disabled={!syncCode} 
+                      className={`w-full py-4 mt-2 rounded-2xl font-black transition-all ${syncCode ? 'bg-white text-black active:scale-95' : 'bg-white/5 text-white/10 cursor-not-allowed'}`}
+                    >
+                      Restaurar via Código
+                    </button>
                   </div>
-                )}
+                </div>
              </div>
-             <div className="bg-[#1a241f] p-5 rounded-[1.5rem] border border-white/5">
-                <textarea value={syncCode} onChange={(e) => setSyncCode(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-white text-[10px] font-mono h-24 outline-none" placeholder="Cole o código aqui..." />
-                <button onClick={importData} disabled={!syncCode} className={`w-full py-4 mt-3 rounded-xl font-black ${syncCode ? 'bg-white text-black' : 'bg-white/5 text-white/10'}`}>
-                  Restaurar
-                </button>
-             </div>
+           </div>
+           
+           <div className="mt-auto pt-8 text-center">
+             <p className="text-white/20 text-[10px] uppercase font-bold tracking-widest flex items-center justify-center gap-2">
+               <i className="fas fa-lock"></i> Seus dados estão criptografados localmente
+             </p>
            </div>
         </div>
       )}
 
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto px-8 py-6 flex justify-between items-center z-50 pointer-events-none">
-        <div className="bg-black/80 backdrop-blur-2xl border border-white/5 px-8 py-4 rounded-full flex gap-12 pointer-events-auto shadow-2xl">
-          <button onClick={() => setActiveView('dashboard')} className={`${activeView === 'dashboard' ? 'text-[#1ed760]' : 'text-white/20'}`}>
-            <i className="fas fa-th-large text-xl"></i>
+      {/* Nav Bar */}
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto px-8 py-6 flex justify-center items-center z-50 pointer-events-none">
+        <div className="bg-black/80 backdrop-blur-2xl border border-white/5 px-8 py-4 rounded-full flex gap-12 pointer-events-auto shadow-2xl relative">
+          <button onClick={() => setActiveView('dashboard')} className={`${activeView === 'dashboard' ? 'text-[#1ed760]' : 'text-white/20'} transition-all hover:scale-110 active:scale-90`}>
+            <i className="fas fa-home text-xl"></i>
           </button>
-          <button onClick={() => setActiveView('expenses')} className={`${activeView === 'expenses' ? 'text-[#1ed760]' : 'text-white/20'}`}>
-            <i className="fas fa-receipt text-xl"></i>
+          <button onClick={() => setActiveView('expenses')} className={`${activeView === 'expenses' ? 'text-[#1ed760]' : 'text-white/20'} transition-all hover:scale-110 active:scale-90`}>
+            <i className="fas fa-list-ul text-xl"></i>
+          </button>
+          
+          {/* Floating Action Button */}
+          <button 
+            onClick={() => { setEditingExpense(undefined); setShowForm(true); }}
+            className="absolute -top-10 left-1/2 -translate-x-1/2 w-16 h-16 bg-[#1ed760] rounded-full flex items-center justify-center text-black text-2xl border-[6px] border-[#0d1511] shadow-xl active:scale-90 transition-all pointer-events-auto"
+          >
+            <i className="fas fa-plus"></i>
           </button>
         </div>
-        <button 
-          onClick={() => { setEditingExpense(undefined); setShowForm(true); }}
-          className="w-16 h-16 bg-[#1ed760] rounded-full flex items-center justify-center text-black text-2xl border-[6px] border-[#0d1511] pointer-events-auto fixed bottom-6 right-6 shadow-xl"
-        >
-          <i className="fas fa-plus"></i>
-        </button>
       </nav>
 
       {showForm && (

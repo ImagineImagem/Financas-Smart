@@ -1,11 +1,21 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { Expense } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+// Informa ao TypeScript que a variável 'process' existe globalmente
+declare const process: any;
 
 export const getFinancialInsights = async (expenses: Expense[]) => {
+  // Criamos a instância dentro da função para garantir que pegue o API_KEY atualizado
+  const apiKey = process.env.API_KEY;
+  
+  if (!apiKey) {
+    return "API_KEY não configurada. Adicione-a nas variáveis de ambiente do Vercel.";
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
   const model = 'gemini-3-flash-preview';
+  
   const dataSummary = expenses.map(e => ({
     desc: e.description,
     val: e.amount,
@@ -25,32 +35,6 @@ export const getFinancialInsights = async (expenses: Expense[]) => {
     return response.text;
   } catch (error) {
     console.error("Gemini Error:", error);
-    return "Não foi possível gerar insights no momento.";
+    return "Não foi possível gerar insights no momento. Verifique se a API_KEY foi configurada corretamente no painel do Vercel.";
   }
-};
-
-export const generateGoalImage = async (goalDescription: string) => {
-  const model = 'gemini-2.5-flash-image';
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: {
-        parts: [{ text: `A motivational, high-quality 3D render representing financial success and the goal: ${goalDescription}. Clean aesthetic, bright colors.` }]
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "16:9"
-        }
-      }
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-  } catch (error) {
-    console.error("Image Generation Error:", error);
-  }
-  return null;
 };
