@@ -1,0 +1,5 @@
+{
+  "name": "Finanças Smart - Shared Expense Tracker",
+  "description": "A comprehensive personal and shared finance tracker allowing you to split expenses between specific groups, track payment methods like Nubank and Inter, and gain AI-powered spending insights.",
+  "requestFramePermissions": []
+}
