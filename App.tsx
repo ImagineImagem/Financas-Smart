@@ -5,6 +5,7 @@ import { PEOPLE, MONTHS } from './constants';
 import SummaryCards from './components/SummaryCards';
 import ExpenseCard from './components/ExpenseCard';
 import ExpenseForm from './components/ExpenseForm';
+import { supabase, isSupabaseConfigured } from './services/supabaseClient';
 
 const App: React.FC = () => {
   const now = new Date();
@@ -15,49 +16,135 @@ const App: React.FC = () => {
   const [expenses, setExpenses] = useState<Expense[]>(() => {
     try {
       const saved = localStorage.getItem('expenses_smart_v5');
-      if (!saved) return [];
-      const parsed = JSON.parse(saved);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.error("Failed to load expenses:", error);
-      return [];
-    }
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
   });
 
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [showForm, setShowForm] = useState(false);
   const [showSync, setShowSync] = useState(false);
-  const [syncCode, setSyncCode] = useState('');
-  const [generatedCode, setGeneratedCode] = useState('');
-  const [copySuccess, setCopySuccess] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | undefined>(undefined);
   const [filterPerson, setFilterPerson] = useState<PersonName | 'Todos'>('Todos');
   const [activeView, setActiveView] = useState<'dashboard' | 'expenses'>('dashboard');
-  
   const [filterMonth, setFilterMonth] = useState<number>(currentMonth);
   const [filterYear, setFilterYear] = useState<number>(currentYear);
 
+  // 1. Carregar dados do Supabase ao iniciar
   useEffect(() => {
-    try {
-      localStorage.setItem('expenses_smart_v5', JSON.stringify(expenses));
-    } catch (e) {
-      console.error("Storage error:", e);
+    if (!isSupabaseConfigured) {
+      setIsLoading(false);
+      return;
     }
-  }, [expenses]);
 
-  const saveExpense = (data: Omit<Expense, 'id' | 'createdAt' | 'isPaid' | 'currentInstallment'> & { id?: string }) => {
-    if (data.id) {
-      setExpenses(prev => prev.map(exp => 
-        exp.id === data.id ? { ...exp, ...data } : exp
-      ));
+    const fetchExpenses = async () => {
+      setIsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('expenses')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        
+        if (data) {
+          const mapped: Expense[] = data.map(item => ({
+            id: item.id,
+            description: item.description,
+            amount: item.amount,
+            paymentType: item.payment_type as PaymentType,
+            installments: item.installments,
+            currentInstallment: item.current_installment,
+            month: item.month,
+            year: item.year,
+            day: item.day,
+            date: item.date,
+            splitBetween: item.split_between as PersonName[],
+            isPaid: item.is_paid,
+            createdAt: item.created_at
+          }));
+          setExpenses(mapped);
+          localStorage.setItem('expenses_smart_v5', JSON.stringify(mapped));
+        }
+      } catch (err) {
+        console.error("Erro ao buscar dados do Supabase:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchExpenses();
+  }, []);
+
+  // 2. Salvar despesa no Supabase e Local
+  const saveExpense = async (data: Omit<Expense, 'id' | 'createdAt' | 'isPaid' | 'currentInstallment'> & { id?: string }) => {
+    const isEdit = !!data.id;
+    
+    if (isSupabaseConfigured) {
+      if (isEdit) {
+        const updatedItem = {
+          description: data.description,
+          amount: data.amount,
+          payment_type: data.paymentType,
+          installments: data.installments,
+          month: data.month,
+          year: data.year,
+          day: data.day,
+          date: data.date,
+          split_between: data.splitBetween,
+        };
+
+        const { error } = await supabase
+          .from('expenses')
+          .update(updatedItem)
+          .eq('id', data.id);
+
+        if (error) {
+          alert("Erro ao salvar no Supabase. Os dados serão mantidos apenas localmente.");
+        }
+      } else {
+        const baseDate = new Date(data.date + 'T12:00:00');
+        const newItems = [];
+        
+        for (let i = 0; i < data.installments; i++) {
+          const currentDate = new Date(baseDate);
+          currentDate.setMonth(baseDate.getMonth() + i);
+          
+          const expense = {
+            id: Math.random().toString(36).substr(2, 9),
+            description: data.description,
+            amount: data.amount,
+            payment_type: data.paymentType,
+            installments: data.installments,
+            current_installment: i + 1,
+            month: currentDate.getMonth(),
+            year: currentDate.getFullYear(),
+            day: currentDate.getDate(),
+            date: currentDate.toISOString().split('T')[0],
+            split_between: data.splitBetween,
+            is_paid: false,
+            created_at: Date.now() + i
+          };
+          newItems.push(expense);
+        }
+
+        const { error } = await supabase.from('expenses').insert(newItems);
+        if (error) {
+          alert("Erro ao sincronizar com o banco. Adicionando localmente.");
+        }
+      }
+    }
+
+    // Atualização local imediata para melhor UX
+    if (isEdit) {
+      setExpenses(prev => prev.map(exp => exp.id === data.id ? { ...exp, ...data } : exp));
     } else {
-      const newExpenses: Expense[] = [];
+      // Re-gerar os itens locais se não houver Supabase ou se houve erro
       const baseDate = new Date(data.date + 'T12:00:00');
-      
+      const localNewItems: Expense[] = [];
       for (let i = 0; i < data.installments; i++) {
         const currentDate = new Date(baseDate);
         currentDate.setMonth(baseDate.getMonth() + i);
-        
-        const expense: Expense = {
+        localNewItems.push({
           ...data,
           id: Math.random().toString(36).substr(2, 9),
           createdAt: Date.now() + i,
@@ -67,112 +154,70 @@ const App: React.FC = () => {
           year: currentDate.getFullYear(),
           day: currentDate.getDate(),
           date: currentDate.toISOString().split('T')[0]
-        };
-        newExpenses.push(expense);
+        });
       }
-      setExpenses(prev => [...newExpenses, ...prev]);
+      setExpenses(prev => [...localNewItems, ...prev]);
     }
+
     setEditingExpense(undefined);
     setShowForm(false);
   };
 
-  const deleteExpense = (id: string) => {
-    if (confirm('Deseja excluir esta despesa permanentemente?')) {
+  const deleteExpense = async (id: string) => {
+    if (confirm('Deseja excluir permanentemente?')) {
+      if (isSupabaseConfigured) {
+        await supabase.from('expenses').delete().eq('id', id);
+      }
       setExpenses(prev => prev.filter(exp => exp.id !== id));
       setEditingExpense(undefined);
       setShowForm(false);
     }
   };
 
-  const togglePaid = (id: string) => {
-    setExpenses(prev => prev.map(exp => 
-      exp.id === id ? { ...exp, isPaid: !exp.isPaid } : exp
-    ));
-  };
+  const togglePaid = async (id: string) => {
+    const expense = expenses.find(e => e.id === id);
+    if (!expense) return;
 
-  const handleEdit = (expense: Expense) => {
-    setEditingExpense(expense);
-    setShowForm(true);
-  };
-
-  const exportData = () => {
-    try {
-      const jsonString = JSON.stringify(expenses);
-      const code = btoa(encodeURIComponent(jsonString).replace(/%([0-9A-F]{2})/g, (match, p1) => {
-        return String.fromCharCode(parseInt(p1, 16));
-      }));
-      setGeneratedCode(code);
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(code).then(() => {
-          setCopySuccess(true);
-          setTimeout(() => setCopySuccess(false), 3000);
-        });
-      }
-    } catch (e) {
-      alert("Erro ao gerar código.");
+    const newState = !expense.isPaid;
+    if (isSupabaseConfigured) {
+      await supabase
+        .from('expenses')
+        .update({ is_paid: newState })
+        .eq('id', id);
     }
+    setExpenses(prev => prev.map(exp => exp.id === id ? { ...exp, isPaid: newState } : exp));
   };
 
   const downloadBackup = () => {
     const dataStr = JSON.stringify(expenses, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-    const exportFileDefaultName = `backup_financas_${new Date().toISOString().split('T')[0]}.json`;
-    
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
-    linkElement.click();
+    const link = document.createElement('a');
+    link.setAttribute('href', dataUri);
+    link.setAttribute('download', `backup_financas_${new Date().toISOString().split('T')[0]}.json`);
+    link.click();
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const fileReader = new FileReader();
     const files = event.target.files;
     if (!files || files.length === 0) return;
-
-    fileReader.onload = (e) => {
+    fileReader.onload = async (e) => {
       try {
-        const content = e.target?.result as string;
-        const decoded = JSON.parse(content);
-        if (Array.isArray(decoded)) {
-          if (confirm(`Restaurar ${decoded.length} despesas do arquivo? Isso substituirá seus dados atuais.`)) {
-            setExpenses(decoded);
-            setShowSync(false);
-            alert('Dados restaurados com sucesso!');
-          }
+        const decoded = JSON.parse(e.target?.result as string);
+        if (Array.isArray(decoded) && confirm('Importar dados do arquivo?')) {
+           setExpenses(decoded);
+           localStorage.setItem('expenses_smart_v5', JSON.stringify(decoded));
+           alert('Dados carregados com sucesso!');
         }
-      } catch (err) {
-        alert('Erro ao ler arquivo de backup.');
-      }
+      } catch { alert('Erro no arquivo.'); }
     };
     fileReader.readAsText(files[0]);
-  };
-
-  const importData = () => {
-    if (!syncCode) return;
-    try {
-      const decodedString = decodeURIComponent(Array.prototype.map.call(atob(syncCode.trim()), (c) => {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      }).join(''));
-      const decoded = JSON.parse(decodedString);
-      if (Array.isArray(decoded)) {
-        if (confirm(`Restaurar ${decoded.length} despesas?`)) {
-          setExpenses(decoded);
-          setShowSync(false);
-          setSyncCode('');
-          alert('Sincronizado!');
-        }
-      }
-    } catch (e) {
-      alert('Código inválido.');
-    }
   };
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
       const matchPerson = filterPerson === 'Todos' || exp.splitBetween.includes(filterPerson as PersonName);
-      const matchMonth = exp.month === filterMonth;
-      const matchYear = exp.year === filterYear;
-      return matchPerson && matchMonth && matchYear;
+      return matchPerson && exp.month === filterMonth && exp.year === filterYear;
     }).sort((a, b) => b.day - a.day);
   }, [expenses, filterPerson, filterMonth, filterYear]);
 
@@ -180,94 +225,48 @@ const App: React.FC = () => {
     const summary: SummaryData = {
       totalPending: 0,
       totalPaid: 0,
-      byPaymentType: {
-        [PaymentType.NUBANK]: 0,
-        [PaymentType.INTER]: 0,
-        [PaymentType.BOLETO]: 0,
-        [PaymentType.PIX]: 0,
-      } as Record<PaymentType, number>,
+      byPaymentType: { [PaymentType.NUBANK]: 0, [PaymentType.INTER]: 0, [PaymentType.BOLETO]: 0, [PaymentType.PIX]: 0 } as any,
       byPerson: {} as any
     };
-
     filteredExpenses.forEach(exp => {
-      const amountToCount = filterPerson === 'Todos' 
-        ? exp.amount 
-        : exp.amount / exp.splitBetween.length;
-
-      if (exp.isPaid) {
-        summary.totalPaid += amountToCount;
-      } else {
-        summary.totalPending += amountToCount;
-      }
-      summary.byPaymentType[exp.paymentType] = (summary.byPaymentType[exp.paymentType] || 0) + amountToCount;
+      const amount = filterPerson === 'Todos' ? exp.amount : exp.amount / exp.splitBetween.length;
+      if (exp.isPaid) summary.totalPaid += amount;
+      else summary.totalPending += amount;
+      summary.byPaymentType[exp.paymentType] += amount;
     });
-
     return summary;
   }, [filteredExpenses, filterPerson]);
 
-  const nextMonthDebt = useMemo(() => {
-    let nextM = filterMonth + 1;
-    let nextY = filterYear;
-    if (nextM > 11) {
-      nextM = 0;
-      nextY += 1;
-    }
-    return expenses
-      .filter(exp => exp.month === nextM && exp.year === nextY && !exp.isPaid)
-      .reduce((sum, exp) => {
-        const amount = filterPerson === 'Todos' ? exp.amount : exp.amount / exp.splitBetween.length;
-        return sum + amount;
-      }, 0);
-  }, [expenses, filterMonth, filterYear, filterPerson]);
-
-  const yearOptions = useMemo(() => {
-    const startY = Math.min(2025, currentYear);
-    const endY = Math.max(2027, currentYear);
-    const years = [];
-    for (let y = startY; y <= endY; y++) {
-      years.push(y);
-    }
-    return years;
-  }, [currentYear]);
+  const yearOptions = [2024, 2025, 2026, 2027];
 
   return (
     <div className="max-w-md mx-auto min-h-screen relative flex flex-col pt-6 pb-32">
+      {isLoading && <div className="fixed top-0 left-0 right-0 h-1 bg-[#1ed760] animate-pulse z-[300]"></div>}
+
       <header className="px-6 mb-8 flex justify-between items-center">
         <div className="flex items-center gap-3">
           <button 
-            onClick={() => { setShowSync(true); setGeneratedCode(''); setSyncCode(''); }}
+            onClick={() => setShowSync(true)}
             className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-[#1ed760] active:scale-90 transition-transform"
           >
-            <i className="fas fa-cloud-upload-alt text-sm"></i>
+            <i className={`fas ${isSupabaseConfigured ? 'fa-database' : 'fa-exclamation-triangle text-amber-500'} text-sm`}></i>
           </button>
           <div>
             <h1 className="text-2xl font-black text-white uppercase tracking-tight leading-none">
               {activeView === 'dashboard' ? 'Início' : 'Faturas'}
             </h1>
-            <p className="text-[#1ed760] text-[10px] font-bold uppercase tracking-widest mt-1">
-              Smart Finance v5.1
+            <p className={`${isSupabaseConfigured ? 'text-[#1ed760]' : 'text-amber-500'} text-[10px] font-bold uppercase tracking-widest mt-1`}>
+              {isLoading ? 'Sincronizando...' : isSupabaseConfigured ? 'Nuvem Conectada' : 'Modo Offline (Sem Banco)'}
             </p>
           </div>
         </div>
         
         <div className="flex gap-2">
-          <select 
-            value={filterMonth}
-            onChange={(e) => setFilterMonth(parseInt(e.target.value))}
-            className="bg-[#1a241f] text-white/60 text-[10px] font-bold px-2 py-2 rounded-xl uppercase tracking-wider outline-none border border-white/10"
-          >
-            {MONTHS.map((m, i) => (
-              <option key={m} value={i} className="bg-[#0d1511]">{m.substring(0, 3)}</option>
-            ))}
+          <select value={filterMonth} onChange={(e) => setFilterMonth(parseInt(e.target.value))} className="bg-[#1a241f] text-white/60 text-[10px] font-bold px-2 py-2 rounded-xl border border-white/10 outline-none">
+            {MONTHS.map((m, i) => <option key={m} value={i}>{m.substring(0, 3)}</option>)}
           </select>
-          <select 
-            value={filterYear}
-            onChange={(e) => setFilterYear(parseInt(e.target.value))}
-            className="bg-[#1a241f] text-white/60 text-[10px] font-bold px-2 py-2 rounded-xl uppercase tracking-wider outline-none border border-white/10"
-          >
-            {yearOptions.map(y => (
-              <option key={y} value={y} className="bg-[#0d1511]">{y}</option>
-            ))}
+          <select value={filterYear} onChange={(e) => setFilterYear(parseInt(e.target.value))} className="bg-[#1a241f] text-white/60 text-[10px] font-bold px-2 py-2 rounded-xl border border-white/10 outline-none">
+            {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </div>
       </header>
@@ -275,245 +274,104 @@ const App: React.FC = () => {
       {activeView === 'dashboard' ? (
         <main className="px-6 space-y-8 animate-in fade-in duration-300">
           <div className="bg-[#1a241f] p-6 rounded-[2.5rem] border border-white/5 shadow-2xl relative overflow-hidden">
-            <div className="flex justify-between items-start mb-6">
-              <div className="space-y-1">
-                <span className="text-[#1ed760] text-sm font-bold">A pagar em {MONTHS[filterMonth]}</span>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-white text-3xl font-black">R$ {summaryData.totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+             <div className="flex justify-between items-start mb-6">
+                <div className="space-y-1">
+                  <span className="text-white/40 text-xs font-bold uppercase">A pagar ({MONTHS[filterMonth]})</span>
+                  <div className="text-white text-3xl font-black">R$ {summaryData.totalPending.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
                 </div>
-              </div>
-              <div className="w-12 h-12 rounded-2xl bg-[#1ed760]/10 flex items-center justify-center">
-                <i className="fas fa-wallet text-[#1ed760]"></i>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
-              <div>
-                <div className="text-white/30 text-[10px] uppercase font-bold tracking-wider">Total do Mês</div>
-                <div className="text-white font-bold">R$ {(summaryData.totalPending + summaryData.totalPaid).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-white/30 text-[10px] uppercase font-bold tracking-wider">Lançado Próx. Mês</div>
-                <div className="text-[#1ed760] font-bold">R$ {nextMonthDebt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-2">
-              <div className="flex justify-between items-center text-[10px] font-bold">
-                <span className="text-white/30 uppercase">Status de Pagamentos</span>
-                <span className="text-[#1ed760]">{Math.round((summaryData.totalPaid / ((summaryData.totalPending + summaryData.totalPaid) || 1)) * 100)}% Pago</span>
-              </div>
-              <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-[#1ed760] rounded-full transition-all duration-700" 
-                  style={{ width: `${Math.min(100, (summaryData.totalPaid / ((summaryData.totalPending + summaryData.totalPaid) || 1)) * 100)}%` }}
-                ></div>
-              </div>
-            </div>
+                <div className="w-12 h-12 rounded-2xl bg-[#1ed760]/10 flex items-center justify-center">
+                  <i className="fas fa-cloud text-[#1ed760]"></i>
+                </div>
+             </div>
+             <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                <div className="h-full bg-[#1ed760] transition-all duration-1000" style={{ width: `${(summaryData.totalPaid / (summaryData.totalPaid + summaryData.totalPending || 1)) * 100}%` }}></div>
+             </div>
           </div>
 
-          <section>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-white font-bold text-lg">Resumo por Carteira</h3>
-              <button onClick={() => setActiveView('expenses')} className="text-[#1ed760] text-sm font-medium">Ver Faturas</button>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              {[PaymentType.NUBANK, PaymentType.INTER, PaymentType.BOLETO, PaymentType.PIX].map(type => (
-                <div key={type} className="bg-[#1a241f] p-5 rounded-3xl border border-white/5 transition-transform active:scale-95 shadow-lg">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                      type === PaymentType.NUBANK ? 'bg-purple-500/10 text-purple-500' :
-                      type === PaymentType.INTER ? 'bg-orange-500/10 text-orange-500' :
-                      type === PaymentType.BOLETO ? 'bg-blue-500/10 text-blue-500' : 'bg-teal-500/10 text-teal-500'
-                    }`}>
-                      <i className={`fas ${
-                        type === PaymentType.NUBANK ? 'fa-credit-card' : 
-                        type === PaymentType.INTER ? 'fa-university' :
-                        type === PaymentType.BOLETO ? 'fa-barcode' : 'fa-bolt'
-                      }`}></i>
-                    </div>
-                  </div>
-                  <div className="text-white/30 text-[10px] font-bold uppercase mb-1">{type}</div>
-                  <div className="text-white font-black text-lg">
-                    R$ {(summaryData.byPaymentType[type] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </div>
-                </div>
-              ))}
-            </div>
+          <section className="grid grid-cols-2 gap-4">
+             {Object.entries(summaryData.byPaymentType).map(([type, value]) => (
+               <div key={type} className="bg-[#1a241f] p-5 rounded-3xl border border-white/5">
+                 <div className="text-white/30 text-[10px] font-bold uppercase mb-1">{type}</div>
+                 <div className="text-white font-black text-lg">R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+               </div>
+             ))}
           </section>
         </main>
       ) : (
         <main className="flex-1 animate-in fade-in duration-300">
-          <section className="px-6 mb-8">
+          <section className="px-6 mb-6">
             <SummaryCards summary={summaryData} />
           </section>
 
-          <section className="px-6 mb-8 overflow-x-auto no-scrollbar">
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setFilterPerson('Todos')}
-                className={`px-6 py-3 rounded-2xl text-sm font-bold transition-all whitespace-nowrap ${
-                  filterPerson === 'Todos' ? 'bg-[#1ed760] text-black shadow-lg shadow-[#1ed760]/20' : 'bg-[#1a241f] text-white/40 border border-white/5'
-                }`}
-              >
-                Todos
-              </button>
-              {PEOPLE.map(person => (
-                <button 
-                  key={person}
-                  onClick={() => setFilterPerson(person)}
-                  className={`px-6 py-3 rounded-2xl text-sm font-bold transition-all whitespace-nowrap ${
-                    filterPerson === person ? 'bg-[#1ed760] text-black shadow-lg shadow-[#1ed760]/20' : 'bg-[#1a241f] text-white/40 border border-white/5'
-                  }`}
-                >
-                  {person}
-                </button>
-              ))}
-            </div>
+          <section className="px-6 mb-6 overflow-x-auto no-scrollbar flex gap-2">
+             <button onClick={() => setFilterPerson('Todos')} className={`px-5 py-3 rounded-2xl text-xs font-bold transition-all ${filterPerson === 'Todos' ? 'bg-[#1ed760] text-black' : 'bg-[#1a241f] text-white/30'}`}>Todos</button>
+             {PEOPLE.map(p => (
+               <button key={p} onClick={() => setFilterPerson(p)} className={`px-5 py-3 rounded-2xl text-xs font-bold transition-all ${filterPerson === p ? 'bg-[#1ed760] text-black' : 'bg-[#1a241f] text-white/30'}`}>{p}</button>
+             ))}
           </section>
 
-          <section className="px-6 pb-24">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-white font-black text-xl">
-                {filterPerson === 'Todos' ? `Lançamentos` : `Parte de ${filterPerson}`}
-              </h3>
-              <span className="bg-[#1a241f] text-white/20 text-[10px] font-bold px-3 py-1 rounded-lg uppercase tracking-wider">
-                {filteredExpenses.length} itens
-              </span>
-            </div>
-
-            <div className="space-y-4">
-              {filteredExpenses.length === 0 ? (
-                <div className="py-20 flex flex-col items-center justify-center opacity-10">
-                  <i className="fas fa-receipt text-6xl mb-4"></i>
-                  <p className="font-bold">Nada para exibir</p>
-                </div>
-              ) : (
-                filteredExpenses.map(exp => (
-                  <ExpenseCard 
-                    key={exp.id} 
-                    expense={exp} 
-                    onTogglePaid={togglePaid} 
-                    onEdit={handleEdit}
-                    filterPerson={filterPerson}
-                  />
-                ))
-              )}
-            </div>
+          <section className="px-6 pb-32 space-y-4">
+             {filteredExpenses.map(exp => (
+               <ExpenseCard key={exp.id} expense={exp} onTogglePaid={togglePaid} onEdit={setEditingExpense} filterPerson={filterPerson} />
+             ))}
+             {filteredExpenses.length === 0 && (
+               <div className="text-center py-20 opacity-20">
+                 <i className="fas fa-receipt text-5xl mb-4"></i>
+                 <p className="font-bold">Nenhum lançamento</p>
+               </div>
+             )}
           </section>
         </main>
       )}
 
-      {/* Sync & Backup Modal */}
       {showSync && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[200] flex flex-col p-6 overflow-y-auto">
-           <div className="flex justify-end mb-4">
-             <button onClick={() => setShowSync(false)} className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-white/40">
-               <i className="fas fa-times text-xl"></i>
-             </button>
-           </div>
-           
-           <div className="flex flex-col items-center text-center mb-10">
-             <div className="w-16 h-16 rounded-3xl bg-[#1ed760]/10 flex items-center justify-center mb-4">
-               <i className="fas fa-shield-alt text-[#1ed760] text-3xl"></i>
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[200] flex flex-col p-6">
+           <div className="flex justify-end mb-8"><button onClick={() => setShowSync(false)} className="text-white/40"><i className="fas fa-times text-2xl"></i></button></div>
+           <div className="text-center mb-10">
+             <div className="w-20 h-20 rounded-[2.5rem] bg-[#1ed760]/10 flex items-center justify-center mx-auto mb-4">
+               <i className={`fas ${isSupabaseConfigured ? 'fa-database' : 'fa-exclamation-circle text-amber-500'} text-[#1ed760] text-3xl`}></i>
              </div>
-             <h2 className="text-white text-2xl font-black">Segurança e Sincronização</h2>
-             <p className="text-white/40 text-xs mt-2 max-w-[250px]">Os dados são salvos localmente. Use as opções abaixo para criar cópias de segurança.</p>
-           </div>
-
-           <div className="space-y-6">
-             {/* Opção 1: Backup em Arquivo (Recomendado) */}
-             <div className="bg-[#1a241f] p-6 rounded-[2rem] border border-white/5 shadow-xl">
-                <div className="flex items-center gap-3 mb-4">
-                  <i className="fas fa-file-download text-[#1ed760]"></i>
-                  <h3 className="text-white font-bold">Backup por Arquivo</h3>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <button 
-                    onClick={downloadBackup} 
-                    className="bg-white/5 hover:bg-white/10 text-white font-bold py-4 rounded-2xl flex flex-col items-center justify-center gap-2 border border-white/5 transition-all"
-                  >
-                    <i className="fas fa-download text-lg"></i>
-                    <span className="text-[10px] uppercase">Baixar .JSON</span>
-                  </button>
-                  <button 
-                    onClick={() => fileInputRef.current?.click()} 
-                    className="bg-white/5 hover:bg-white/10 text-white font-bold py-4 rounded-2xl flex flex-col items-center justify-center gap-2 border border-white/5 transition-all"
-                  >
-                    <i className="fas fa-upload text-lg"></i>
-                    <span className="text-[10px] uppercase">Abrir Arquivo</span>
-                  </button>
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    onChange={handleFileUpload} 
-                    accept=".json" 
-                    className="hidden" 
-                  />
-                </div>
-             </div>
-
-             {/* Opção 2: Código de Sincronização */}
-             <div className="bg-[#1a241f] p-6 rounded-[2rem] border border-white/5 shadow-xl">
-                <div className="flex items-center gap-3 mb-4">
-                  <i className="fas fa-code text-[#1ed760]"></i>
-                  <h3 className="text-white font-bold">Código de Transferência</h3>
-                </div>
-                
-                <div className="space-y-4">
-                  <button onClick={exportData} className="w-full bg-[#1ed760] text-black font-black py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all">
-                    <i className="fas fa-copy"></i> {copySuccess ? 'Copiado!' : 'Gerar e Copiar Código'}
-                  </button>
-
-                  <div className="relative">
-                    <textarea 
-                      value={syncCode} 
-                      onChange={(e) => setSyncCode(e.target.value)} 
-                      className="w-full bg-black/40 border border-white/5 rounded-2xl p-4 text-white text-[10px] font-mono h-24 outline-none focus:border-[#1ed760]/50 transition-all" 
-                      placeholder="Cole o código recebido aqui para restaurar..." 
-                    />
-                    <button 
-                      onClick={importData} 
-                      disabled={!syncCode} 
-                      className={`w-full py-4 mt-2 rounded-2xl font-black transition-all ${syncCode ? 'bg-white text-black active:scale-95' : 'bg-white/5 text-white/10 cursor-not-allowed'}`}
-                    >
-                      Restaurar via Código
-                    </button>
-                  </div>
-                </div>
-             </div>
-           </div>
-           
-           <div className="mt-auto pt-8 text-center">
-             <p className="text-white/20 text-[10px] uppercase font-bold tracking-widest flex items-center justify-center gap-2">
-               <i className="fas fa-lock"></i> Seus dados estão criptografados localmente
+             <h2 className="text-white text-2xl font-black">Nuvem e Backup</h2>
+             <p className="text-white/40 text-sm mt-2">
+               {isSupabaseConfigured 
+                 ? "Seus dados estão sendo sincronizados com o Supabase." 
+                 : "O banco de dados não está configurado. Os dados são salvos apenas neste navegador."}
              </p>
+           </div>
+
+           <div className="space-y-4">
+             {!isSupabaseConfigured && (
+               <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl mb-4">
+                 <p className="text-amber-500 text-xs font-bold uppercase mb-1">Aviso de Configuração</p>
+                 <p className="text-white/60 text-[10px]">Para salvar na nuvem, adicione as variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Vercel.</p>
+               </div>
+             )}
+
+             <div className="bg-[#1a241f] p-6 rounded-3xl border border-white/5">
+               <h3 className="text-white font-bold mb-4 flex items-center gap-2"><i className="fas fa-file-export text-[#1ed760]"></i> Backup Offline</h3>
+               <div className="grid grid-cols-2 gap-3">
+                 <button onClick={downloadBackup} className="bg-white/5 py-4 rounded-2xl text-white font-bold text-[10px] uppercase">Baixar JSON</button>
+                 <button onClick={() => fileInputRef.current?.click()} className="bg-white/5 py-4 rounded-2xl text-white font-bold text-[10px] uppercase">Abrir JSON</button>
+                 <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
+               </div>
+             </div>
            </div>
         </div>
       )}
 
-      {/* Nav Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto px-8 py-6 flex justify-center items-center z-50 pointer-events-none">
-        <div className="bg-black/80 backdrop-blur-2xl border border-white/5 px-8 py-4 rounded-full flex gap-12 pointer-events-auto shadow-2xl relative">
-          <button onClick={() => setActiveView('dashboard')} className={`${activeView === 'dashboard' ? 'text-[#1ed760]' : 'text-white/20'} transition-all hover:scale-110 active:scale-90`}>
-            <i className="fas fa-home text-xl"></i>
-          </button>
-          <button onClick={() => setActiveView('expenses')} className={`${activeView === 'expenses' ? 'text-[#1ed760]' : 'text-white/20'} transition-all hover:scale-110 active:scale-90`}>
-            <i className="fas fa-list-ul text-xl"></i>
-          </button>
-          
-          {/* Floating Action Button */}
-          <button 
-            onClick={() => { setEditingExpense(undefined); setShowForm(true); }}
-            className="absolute -top-10 left-1/2 -translate-x-1/2 w-16 h-16 bg-[#1ed760] rounded-full flex items-center justify-center text-black text-2xl border-[6px] border-[#0d1511] shadow-xl active:scale-90 transition-all pointer-events-auto"
-          >
-            <i className="fas fa-plus"></i>
-          </button>
-        </div>
+      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-2xl border border-white/5 px-8 py-4 rounded-full flex gap-12 z-50 shadow-2xl">
+         <button onClick={() => setActiveView('dashboard')} className={activeView === 'dashboard' ? 'text-[#1ed760]' : 'text-white/20'}><i className="fas fa-home text-xl"></i></button>
+         <button onClick={() => setActiveView('expenses')} className={activeView === 'expenses' ? 'text-[#1ed760]' : 'text-white/20'}><i className="fas fa-list-ul text-xl"></i></button>
+         <button onClick={() => { setEditingExpense(undefined); setShowForm(true); }} className="w-14 h-14 bg-[#1ed760] rounded-full flex items-center justify-center text-black absolute -top-7 left-1/2 -translate-x-1/2 border-[6px] border-[#0d1511] active:scale-90 transition-transform shadow-xl"><i className="fas fa-plus"></i></button>
       </nav>
 
-      {showForm && (
-        <ExpenseForm onSave={saveExpense} onClose={() => { setShowForm(false); setEditingExpense(undefined); }} initialData={editingExpense} onDelete={deleteExpense} />
+      {(showForm || editingExpense) && (
+        <ExpenseForm 
+          onSave={saveExpense} 
+          onClose={() => { setShowForm(false); setEditingExpense(undefined); }} 
+          initialData={editingExpense} 
+          onDelete={deleteExpense} 
+        />
       )}
     </div>
   );
