@@ -1,41 +1,69 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { Expense, PaymentType, PersonName } from '../types';
-import { PAYMENT_TYPES, PEOPLE, MONTHS } from '../constants';
+import { PAYMENT_TYPES } from '../constants';
 
 interface ExpenseFormProps {
   onSave: (expense: Omit<Expense, 'id' | 'createdAt' | 'isPaid' | 'currentInstallment'> & { id?: string }) => void;
   onClose: () => void;
   onDelete?: (id: string) => void;
   initialData?: Expense;
+  peopleList: PersonName[];
+  personLabels: Record<string, string>;
+  onAddPerson: (sigla: string, name: string) => void;
 }
 
-const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, initialData }) => {
+const ExpenseForm: React.FC<ExpenseFormProps> = ({ 
+  onSave, 
+  onClose, 
+  onDelete, 
+  initialData, 
+  peopleList, 
+  personLabels,
+  onAddPerson 
+}) => {
   const [description, setDescription] = useState(initialData?.description || '');
-  const [amount, setAmount] = useState(initialData?.amount.toString() || '');
+  const [amount, setAmount] = useState(initialData?.amount?.toString() || '');
   const [paymentType, setPaymentType] = useState<PaymentType>(initialData?.paymentType || PaymentType.NUBANK);
   const [installments, setInstallments] = useState(initialData?.installments || 1);
   const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
-  const [splitBetween, setSplitBetween] = useState<PersonName[]>(initialData?.splitBetween || ['Ju']);
+  const [splitBetween, setSplitBetween] = useState<PersonName[]>(initialData?.splitBetween || ['Jo']); 
   const [isDivided, setIsDivided] = useState(initialData ? initialData.splitBetween.length > 0 : true);
+  
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!description || !amount || (isDivided && splitBetween.length === 0)) return;
+    if (!description || !amount) {
+      alert("Preencha a descrição e o valor.");
+      return;
+    }
+    if (isDivided && splitBetween.length === 0) {
+      alert("Selecione pelo menos uma pessoa para dividir ou desative a divisão.");
+      return;
+    }
 
-    const selectedDate = new Date(date + 'T12:00:00'); // Midday to avoid timezone issues
+    const normalizedAmount = amount.replace(',', '.');
+    const parsedAmount = parseFloat(normalizedAmount);
+
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      alert("Valor inválido.");
+      return;
+    }
+
+    const selectedDate = new Date(date + 'T12:00:00'); 
 
     onSave({
       id: initialData?.id,
       description,
-      amount: parseFloat(amount),
+      amount: parsedAmount,
       paymentType,
       installments,
       month: selectedDate.getMonth(),
       year: selectedDate.getFullYear(),
       day: selectedDate.getDate(),
       date,
-      splitBetween: isDivided ? splitBetween : ['Ju'],
+      splitBetween: isDivided ? splitBetween : ['Jo'],
     });
     onClose();
   };
@@ -46,29 +74,49 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, in
     );
   };
 
+  const handleAddNewPerson = (e: React.MouseEvent) => {
+    e.preventDefault(); 
+    e.stopPropagation();
+    
+    const sigla = prompt("Digite a sigla (Max 3 letras, Ex: Edu):");
+    if (!sigla) return;
+    
+    if (sigla.length > 3) {
+      alert("A sigla deve ter no máximo 3 letras.");
+      return;
+    }
+    
+    const name = prompt("Digite o nome completo:");
+    if (!name) return;
+    
+    onAddPerson(sigla, name);
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex flex-col pt-10">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex flex-col pt-10 animate-in fade-in duration-200">
       <div className="flex justify-between items-center px-6 py-4">
-        <button onClick={onClose} className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white">
+        <button onClick={onClose} className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white transition-colors">
           <i className="fas fa-times text-xl"></i>
         </button>
         <h2 className="text-white font-bold text-lg">{initialData ? 'Editar Despesa' : 'Nova Despesa'}</h2>
         {initialData ? (
-          <button onClick={() => onDelete?.(initialData.id)} className="text-red-400 text-sm font-medium">Excluir</button>
+          <button onClick={() => onDelete?.(initialData.id)} className="text-red-400 text-sm font-medium hover:text-red-300 transition-colors">Excluir</button>
         ) : (
-          <button onClick={() => { setDescription(''); setAmount(''); }} className="text-white/40 text-sm font-medium">Limpar</button>
+          <button onClick={() => { setDescription(''); setAmount(''); }} className="text-white/40 text-sm font-medium hover:text-white transition-colors">Limpar</button>
         )}
       </div>
 
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 space-y-8 custom-scrollbar pb-32">
         {/* Value Section */}
         <div className="space-y-2">
-          <label className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Valor Total</label>
-          <div className="bg-[#1a241f] border border-white/10 rounded-[2rem] p-6 flex items-baseline gap-2">
+          <label className="text-white/40 text-[10px] font-bold uppercase tracking-widest">
+             {initialData ? 'Valor da Parcela/Despesa' : 'Valor Total da Compra'}
+          </label>
+          <div className="bg-[#1a241f] border border-white/10 rounded-[2rem] p-6 flex items-baseline gap-2 focus-within:border-[#1ed760] transition-colors">
             <span className="text-[#1ed760] text-3xl font-bold">R$</span>
             <input
-              type="number"
-              step="0.01"
+              type="text" 
+              inputMode="decimal"
               autoFocus
               className="bg-transparent text-white text-5xl font-black outline-none w-full placeholder:text-white/10"
               placeholder="0,00"
@@ -76,12 +124,17 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, in
               onChange={(e) => setAmount(e.target.value)}
             />
           </div>
+          {!initialData && installments > 1 && amount && (
+             <p className="text-white/40 text-xs text-right px-2">
+               Serão geradas {installments} parcelas de R$ {(parseFloat(amount.replace(',', '.') || '0') / installments).toLocaleString('pt-BR', {minimumFractionDigits: 2})}
+             </p>
+          )}
         </div>
 
         {/* Description */}
         <div className="space-y-2">
           <label className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Descrição</label>
-          <div className="bg-[#1a241f] border border-white/10 rounded-2xl p-4 flex items-center gap-4">
+          <div className="bg-[#1a241f] border border-white/10 rounded-2xl p-4 flex items-center gap-4 focus-within:border-[#1ed760] transition-colors">
             <i className="fas fa-edit text-white/20"></i>
             <input
               type="text"
@@ -102,10 +155,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, in
                 key={type}
                 type="button"
                 onClick={() => setPaymentType(type)}
-                className={`p-4 rounded-2xl border flex items-center gap-3 transition-all ${
+                className={`p-4 rounded-2xl border flex items-center gap-3 transition-all active:scale-95 ${
                   paymentType === type 
                   ? 'bg-[#1ed760] border-[#1ed760] text-black shadow-lg shadow-[#1ed760]/20' 
-                  : 'bg-[#1a241f] border-white/5 text-white/40'
+                  : 'bg-[#1a241f] border-white/5 text-white/40 hover:bg-white/5'
                 }`}
               >
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${paymentType === type ? 'bg-black/10' : 'bg-white/5'}`}>
@@ -128,29 +181,41 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, in
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <label className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Data</label>
-            <div className="bg-[#1a241f] border border-white/10 rounded-2xl p-4 flex items-center justify-between relative cursor-pointer group">
-              <div className="flex-1">
-                <div className="text-white/30 text-[10px]">Vencimento</div>
-                <div className="text-white font-bold">
-                  {new Date(date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })}
+          <div className="space-y-2 relative group">
+            <label className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Data da Compra</label>
+            <div 
+              className="bg-[#1a241f] border border-white/10 rounded-2xl p-4 flex items-center justify-between relative hover:bg-white/5 transition-colors active:scale-95"
+            >
+              <div className="flex-1 pointer-events-none">
+                <div className="text-white font-bold text-lg">
+                  {new Date(date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '')}
                 </div>
+                <div className="text-white/20 text-[10px] uppercase">{new Date(date + 'T12:00:00').getFullYear()}</div>
               </div>
-              <i className="far fa-calendar text-white/20 group-hover:text-[#1ed760] transition-colors"></i>
               <input 
+                ref={dateInputRef}
                 type="date" 
-                className="absolute inset-0 opacity-0 cursor-pointer"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
+                onClick={(e) => {
+                  if ('showPicker' in e.currentTarget) {
+                    try {
+                      e.currentTarget.showPicker();
+                    } catch (err) {
+                      // ignore
+                    }
+                  }
+                }}
               />
+              <i className="fas fa-calendar-alt text-white/20 pointer-events-none"></i>
             </div>
           </div>
 
           <div className="space-y-2">
             <label className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Parcelas</label>
-            <div className="bg-[#1a241f] border border-white/10 rounded-2xl p-2 flex items-center justify-between">
-              <button type="button" onClick={() => setInstallments(Math.max(1, installments - 1))} className="w-10 h-10 flex items-center justify-center text-white/40 hover:text-white">
+            <div className="bg-[#1a241f] border border-white/10 rounded-2xl p-2 flex items-center justify-between h-[84px]">
+              <button type="button" onClick={() => setInstallments(Math.max(1, installments - 1))} className="w-10 h-10 flex items-center justify-center text-white/40 hover:text-white active:scale-90 transition-transform">
                 <i className="fas fa-minus"></i>
               </button>
               <div className="text-center">
@@ -159,7 +224,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, in
                   {installments === 1 ? 'À Vista' : 'Parcelado'}
                 </div>
               </div>
-              <button type="button" onClick={() => setInstallments(installments + 1)} className="bg-[#1ed760] w-10 h-10 rounded-xl flex items-center justify-center text-black">
+              <button type="button" onClick={() => setInstallments(installments + 1)} className="bg-[#1ed760] w-10 h-10 rounded-xl flex items-center justify-center text-black active:scale-90 transition-transform">
                 <i className="fas fa-plus"></i>
               </button>
             </div>
@@ -184,13 +249,13 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, in
 
           {isDivided && (
             <>
-              <div className="flex justify-between items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
-                {PEOPLE.map(person => (
+              <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar items-center">
+                {peopleList.map(person => (
                   <button
                     key={person}
                     type="button"
                     onClick={() => togglePerson(person)}
-                    className="flex flex-col items-center gap-2 group min-w-[50px]"
+                    className="flex flex-col items-center gap-2 group min-w-[60px]"
                   >
                     <div className={`w-14 h-14 rounded-full border-2 flex items-center justify-center relative transition-all ${
                       splitBetween.includes(person) ? 'border-[#1ed760] bg-[#1ed760]/10 shadow-[0_0_15px_rgba(30,215,96,0.3)]' : 'border-white/10 grayscale'
@@ -204,11 +269,22 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, in
                          </div>
                        )}
                     </div>
-                    <span className={`text-[10px] font-bold ${splitBetween.includes(person) ? 'text-white' : 'text-white/20'}`}>
-                      {person === 'Ju' ? 'Você' : person}
+                    <span className={`text-[10px] font-bold whitespace-nowrap ${splitBetween.includes(person) ? 'text-white' : 'text-white/20'}`}>
+                      {personLabels[person] || person}
                     </span>
                   </button>
                 ))}
+                
+                <button
+                  type="button"
+                  onClick={handleAddNewPerson}
+                  className="flex flex-col items-center gap-2 group min-w-[60px] cursor-pointer"
+                >
+                  <div className="w-14 h-14 rounded-full border-2 border-white/10 border-dashed flex items-center justify-center text-white/20 hover:text-white hover:border-white/40 transition-all active:scale-95 bg-white/5">
+                    <i className="fas fa-plus"></i>
+                  </div>
+                  <span className="text-[10px] font-bold text-white/20">Novo</span>
+                </button>
               </div>
 
               <div className="flex justify-between items-end border-t border-white/5 pt-4">
@@ -217,7 +293,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onSave, onClose, onDelete, in
                   <span className="text-white/40">({splitBetween.length} pessoas selecionadas)</span>
                 </div>
                 <div className="text-[#1ed760] text-xl font-black">
-                  R$ {((parseFloat(amount || '0') || 0) / (splitBetween.length || 1)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {(( (!initialData && installments > 1) 
+                        ? (parseFloat(amount.replace(',', '.') || '0') / installments) 
+                        : parseFloat(amount.replace(',', '.') || '0') || 0
+                       ) / (splitBetween.length || 1)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
               </div>
             </>

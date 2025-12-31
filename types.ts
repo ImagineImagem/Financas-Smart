@@ -6,7 +6,7 @@ export enum PaymentType {
   PIX = 'Pix'
 }
 
-export type PersonName = 'Ju' | 'Jo' | 'Dy' | 'Gi' | 'Ra';
+export type PersonName = string;
 
 export interface Expense {
   id: string;

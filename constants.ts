@@ -1,7 +1,16 @@
 
 import { PaymentType, PersonName } from './types';
 
-export const PEOPLE: PersonName[] = ['Ju', 'Jo', 'Dy', 'Gi', 'Ra'];
+// Updated Order: Jo, Dy, Gi, Ju, Ra
+export const PEOPLE: PersonName[] = ['Jo', 'Dy', 'Gi', 'Ju', 'Ra'];
+
+export const PERSON_FULL_NAMES: Record<string, string> = {
+  'Jo': 'Joubert',
+  'Dy': 'Dyene',
+  'Gi': 'Gilberto',
+  'Ju': 'Juracy',
+  'Ra': 'Raimunda'
+};
 
 export const PAYMENT_TYPES: PaymentType[] = [
   PaymentType.NUBANK,
